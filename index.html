@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Telegram P2P Full</title>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <style>
+        :root {
+            --bg-main: #0e1621;
+            --bg-chat: #17212b;
+            --blue: #5288c1;
+            --text: #f5f5f5;
+            --gray: #708499;
+            --accent: #2b5278;
+            --tg-blue: #24a1de;
+        }
+
+        body { 
+            margin: 0; padding: 0; 
+            font-family: -apple-system, system-ui, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif;
+            background: var(--bg-main); color: var(--text); overflow: hidden;
+        }
+
+        /* Навигация и экраны */
+        .screen { display: none; height: 100vh; flex-direction: column; position: relative; }
+        .active-screen { display: flex; }
+
+        /* Шапка */
+        .top-bar { display: flex; align-items: center; padding: 10px 15px; background: var(--bg-chat); gap: 15px; border-bottom: 1px solid #101921; }
+        .top-bar button { background: none; border: none; color: white; cursor: pointer; font-size: 20px; }
+
+        /* Боковое меню */
+        .drawer {
+            position: fixed; left: -300px; top: 0; width: 280px; height: 100%;
+            background: var(--bg-side); z-index: 1000; transition: 0.3s;
+            background: var(--bg-main); border-right: 1px solid #101921;
+        }
+        .drawer.active { left: 0; }
+        .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: none; z-index: 900; }
+        .overlay.active { display: block; }
+
+        /* Стили для кнопок меню и вкладок */
+        .drawer-item { padding: 15px 20px; display: flex; align-items: center; gap: 15px; cursor: pointer; width: 100%; text-align: left; background: none; border: none; color: white; }
+        .drawer-item:hover { background: rgba(255,255,255,0.05); }
+
+        .tabs { display: flex; gap: 10px; padding: 10px 15px; border-bottom: 1px solid #101921; overflow-x: auto; }
+        .tab { color: var(--gray); padding: 5px 12px; border-radius: 15px; white-space: nowrap; cursor: pointer; }
+        .tab.active { background: var(--blue); color: white; }
+
+        /* Чат и сообщения */
+        .messages-area { flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 10px; background-image: url('https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png'); background-size: cover; }
+        .bubble { padding: 8px 12px; border-radius: 12px; max-width: 75%; font-size: 15px; box-shadow: 0 1px 2px rgba(0,0,0,0.2); }
+        .bubble.in { background: #182533; align-self: flex-start; }
+        .bubble.out { background: var(--accent); align-self: flex-end; }
+
+        /* Ввод сообщения */
+        .input-panel { display: flex; align-items: center; padding: 8px 12px; background: var(--bg-chat); gap: 10px; }
+        .input-panel input { flex: 1; background: none; border: none; color: white; outline: none; padding: 10px; font-size: 16px; }
+
+        /* Плавающие кнопки */
+        .fab { position: fixed; right: 20px; bottom: 30px; width: 56px; height: 56px; background: var(--tg-blue); border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 10px rgba(0,0,0,0.4); cursor: pointer; z-index: 500; }
+
+        /* Предупреждение о протоколе */
+        #protocol-warning { background: #ff5252; color: white; text-align: center; font-size: 12px; padding: 5px; display: none; }
+    </style>
+</head>
+<body>
+
+<div id="protocol-warning">Звонки не будут работать без HTTPS! Используйте GitHub Pages.</div>
+
+<div class="overlay" id="overlay" onclick="toggleMenu()"></div>
+
+<nav class="drawer" id="drawer">
+    <div style="padding: 20px; background: #1c2936;">
+        <div style="width: 50px; height: 50px; border-radius: 50%; background: var(--blue); margin-bottom: 10px;"></div>
+        <div id="my-name">Мой профиль</div>
+        <div id="my-peer-id" style="font-size: 10px; color: var(--gray);">ID: Загрузка...</div>
+    </div>
+    <button class="drawer-item">📁 Папки с чатами</button>
+    <button class="drawer-item">📦 Архив</button>
+    <button class="drawer-item" onclick="alert('Настройки: Язык, Перевод сообщений')">⚙️ Настройки</button>
+</nav>
+
+<div id="screen-list" class="screen active-screen">
+    <header class="top-bar">
+        <button onclick="toggleMenu()" aria-label="Открыть меню">☰</button>
+        <div style="flex:1; font-weight:bold; font-size:18px;">Telegram P2P</div>
+        <button aria-label="Поиск">🔍</button>
+    </header>
+    
+    <div class="tabs" role="tablist">
+        <div class="tab active" role="tab">All</div>
+        <div class="tab" role="tab">Личные</div>
+        <div class="tab" role="tab">Новые</div>
+    </div>
+
+    <div id="chat-items">
+        <div style="padding: 20px; text-align: center; color: var(--gray);">
+            Нажмите на карандаш, чтобы добавить собеседника по ID
+        </div>
+    </div>
+
+    <div class="fab" onclick="addPeerByPrompt()" aria-label="Новое сообщение">✏️</div>
+</div>
+
+<div id="screen-chat" class="screen">
+    <header class="top-bar">
+        <button onclick="showScreen('screen-list')">⬅️</button>
+        <div style="flex:1">
+            <div id="chat-title" style="font-weight:bold;">Имя</div>
+            <div id="chat-subtitle" style="font-size:12px; color:var(--gray);">был(а) недавно</div>
+        </div>
+        <button onclick="startCall()" style="color:#4caf50;">📞</button>
+        <button>⋮</button>
+    </header>
+    
+    <div id="add-contact-bar" style="display:none; padding:10px; background:#1c2936; text-align:center;">
+        <button onclick="openAddContact()" style="color:var(--blue); font-size:14px;">Добавить в контакты</button>
+    </div>
+
+    <div class="messages-area" id="msg-container"></div>
+
+    <div class="input-panel">
+        <button style="font-size:24px; color:var(--gray);">📎</button>
+        <input type="text" id="msg-input" placeholder="Сообщение" aria-label="Поле ввода">
+        <button id="send-btn" style="color:var(--blue); font-weight:bold; font-size:24px;">🎤</button>
+    </div>
+</div>
+
+<div id="screen-add-contact" class="screen" style="background: var(--bg-main); z-index: 2000;">
+    <header class="top-bar">
+        <button onclick="showScreen('screen-chat')">Отмена</button>
+        <div style="flex:1; text-align:center; font-weight:bold;">Новый контакт</div>
+        <button onclick="saveContact()" style="color:var(--blue);">Готово</button>
+    </header>
+    <div style="padding: 20px; display:flex; flex-direction:column; gap:15px;">
+        <input type="text" id="c-fname" placeholder="Имя (обязательно)" style="background:#242f3d; border:none; padding:15px; color:white; border-radius:8px;">
+        <input type="text" id="c-lname" placeholder="Фамилия (необязательно)" style="background:#242f3d; border:none; padding:15px; color:white; border-radius:8px;">
+    </div>
+</div>
+
+<script>
+    if (window.location.protocol !== 'https:' && window.location.hostname !== 'localhost') {
+        document.getElementById('protocol-warning').style.display = 'block';
+    }
+
+    const peer = new Peer();
+    let currentConn = null;
+    let activePeerId = null;
+
+    peer.on('open', (id) => {
+        document.getElementById('my-peer-id').innerText = "ID: " + id;
+    });
+
+    peer.on('connection', (conn) => {
+        setupConn(conn);
+    });
+
+    peer.on('call', (call) => {
+        if (confirm("Входящий звонок! Ответить?")) {
+            navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+                call.answer(stream);
+                call.on('stream', (remoteStream) => {
+                    const audio = document.createElement('audio');
+                    audio.srcObject = remoteStream;
+                    audio.play();
+                });
+            });
+        }
+    });
+
+    function setupConn(conn) {
+        currentConn = conn;
+        activePeerId = conn.peer;
+        conn.on('data', (data) => renderMsg(data, 'in'));
+        openChatWindow(conn.peer, "в сети");
+    }
+
+    function renderMsg(text, type) {
+        const div = document.createElement('div');
+        div.className = 'bubble ' + type;
+        div.innerText = text;
+        const container = document.getElementById('msg-container');
+        container.appendChild(div);
+        container.scrollTop = container.scrollHeight;
+    }
+
+    function openChatWindow(name, status) {
+        showScreen('screen-chat');
+        document.getElementById('chat-title').innerText = name;
+        document.getElementById('chat-subtitle').innerText = status;
+        document.getElementById('add-contact-bar').style.display = 'block';
+    }
+
+    function showScreen(id) {
+        document.querySelectorAll('.screen').forEach(s => s.classList.remove('active-screen'));
+        document.getElementById(id).classList.add('active-screen');
+    }
+
+    function toggleMenu() {
+        document.getElementById('drawer').classList.toggle('active');
+        document.getElementById('overlay').classList.toggle('active');
+    }
+
+    function addPeerByPrompt() {
+        const id = prompt("Введите ID собеседника:");
+        if (id) {
+            const conn = peer.connect(id);
+            setupConn(conn);
+        }
+    }
+
+    function startCall() {
+        if (!activePeerId) return;
+        navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+            const call = peer.call(activePeerId, stream);
+            alert("Звоним...");
+        }).catch(e => alert("Ошибка микрофона: " + e));
+    }
+
+    document.getElementById('msg-input').oninput = (e) => {
+        document.getElementById('send-btn').innerText = e.target.value.trim() ? "➡️" : "🎤";
+    };
+
+    document.getElementById('send-btn').onclick = () => {
+        const input = document.getElementById('msg-input');
+        if (input.value.trim() && currentConn) {
+            currentConn.send(input.value);
+            renderMsg(input.value, 'out');
+            input.value = "";
+            document.getElementById('send-btn').innerText = "🎤";
+        }
+    };
+
+    function openAddContact() { showScreen('screen-add-contact'); }
+    function saveContact() {
+        const fname = document.getElementById('c-fname').value;
+        if(fname) {
+            document.getElementById('chat-title').innerText = fname;
+            document.getElementById('add-contact-bar').style.display = 'none';
+            showScreen('screen-chat');
+        }
+    }
+</script>
+</body>
+</html>
